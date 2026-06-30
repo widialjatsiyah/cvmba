@@ -489,32 +489,61 @@ $(document).ready(function() {
     });
 
     //Change in row discount type or discount amount
-    $('table#pos_table tbody').on(
-        'change',
-        'select.row_discount_type, input.row_discount_amount',
-        function() {
-            var tr = $(this).parents('tr');
+    // $('table#pos_table tbody').on(
+    //     'change',
+    //     'select.row_discount_type, input.row_discount_amount',
+    //     function() {
+    //         var tr = $(this).parents('tr');
 
-            //calculate discounted unit price
-            var discounted_unit_price = calculate_discounted_unit_price(tr);
+    //         //calculate discounted unit price
+    //         var discounted_unit_price = calculate_discounted_unit_price(tr);
 
-            var tax_rate = tr
-                .find('select.tax_id')
-                .find(':selected')
-                .data('rate');
-            var quantity = __read_number(tr.find('input.pos_quantity'));
+    //         var tax_rate = tr
+    //             .find('select.tax_id')
+    //             .find(':selected')
+    //             .data('rate');
+    //         var quantity = __read_number(tr.find('input.pos_quantity'));
 
-            var unit_price_inc_tax = __add_percent(discounted_unit_price, tax_rate);
-            var line_total = quantity * unit_price_inc_tax;
+    //         var unit_price_inc_tax = __add_percent(discounted_unit_price, tax_rate);
+    //         var line_total = quantity * unit_price_inc_tax;
 
-            __write_number(tr.find('input.pos_unit_price_inc_tax'), unit_price_inc_tax);
-            __write_number(tr.find('input.pos_line_total'), line_total, false, 2);
-            tr.find('span.pos_line_total_text').text(__currency_trans_from_en(line_total, true));
-            pos_each_row(tr);
-            pos_total_row();
-            round_row_to_iraqi_dinnar(tr);
-        }
-    );
+    //         __write_number(tr.find('input.pos_unit_price_inc_tax'), unit_price_inc_tax);
+    //         __write_number(tr.find('input.pos_line_total'), line_total, false, 2);
+    //         tr.find('span.pos_line_total_text').text(__currency_trans_from_en(line_total, true));
+    //         pos_each_row(tr);
+    //         pos_total_row();
+    //         round_row_to_iraqi_dinnar(tr);
+    //     }
+    // );
+
+    // Event listener untuk perubahan diskon (biasa + klaim)
+$('table#pos_table tbody').on(
+    'change',
+    'select.row_discount_type, input.row_discount_amount, select.row_discount_type_claim, input.row_discount_amount_claim',
+    function() {
+        var tr = $(this).parents('tr');
+
+        // Hitung ulang unit price setelah diskon (stacking)
+        var discounted_unit_price = calculate_discounted_unit_price(tr);
+
+        var tax_rate = tr
+            .find('select.tax_id')
+            .find(':selected')
+            .data('rate');
+        var quantity = __read_number(tr.find('input.pos_quantity'));
+
+        var unit_price_inc_tax = __add_percent(discounted_unit_price, tax_rate);
+        var line_total = quantity * unit_price_inc_tax;
+
+        __write_number(tr.find('input.pos_unit_price_inc_tax'), unit_price_inc_tax);
+        __write_number(tr.find('input.pos_line_total'), line_total, false, 2);
+        tr.find('span.pos_line_total_text').text(__currency_trans_from_en(line_total, true));
+
+        pos_each_row(tr);
+        pos_total_row();
+        round_row_to_iraqi_dinnar(tr);
+    }
+);
 
     //Remove row on click on remove row
     $('table#pos_table tbody').on('click', 'i.pos_remove_row', function() {
@@ -2191,6 +2220,51 @@ function calculate_discounted_unit_price(row) {
         row.find('input.pos_unit_price')
     );
 
+    // ---- 1. Diskon biasa ----
+    var row_discount_type = row.find('select.row_discount_type').val();
+    var discount_input = row.find('input.row_discount_amount').val();
+    var row_discounted_unit_price = this_unit_price;
+
+    if (discount_input) {
+        if (row_discount_type == 'fixed') {
+            let total_discount = discount_input
+                .split('+')
+                .reduce((sum, item) => {
+                    return sum + (parseFloat(item) || 0);
+                }, 0);
+            row_discounted_unit_price = this_unit_price - total_discount;
+        } else {
+            // Asumsikan applyTieredDiscount menangani persentase bertingkat
+            row_discounted_unit_price = applyTieredDiscount(this_unit_price, discount_input);
+        }
+    }
+
+    // ---- 2. Diskon klaim (stacking) ----
+    var row_discount_type_claim = row.find('select.row_discount_type_claim').val();
+    var discount_input_claim = row.find('input.row_discount_amount_claim').val();
+
+    if (discount_input_claim) {
+        if (row_discount_type_claim == 'fixed') {
+            let total_discount_claim = discount_input_claim
+                .split('+')
+                .reduce((sum, item) => {
+                    return sum + (parseFloat(item) || 0);
+                }, 0);
+            row_discounted_unit_price = row_discounted_unit_price - total_discount_claim;
+        } else {
+            // Persentase: harga setelah diskon biasa dikurangi persentase klaim
+            row_discounted_unit_price = row_discounted_unit_price * (100 - parseFloat(discount_input_claim)) / 100;
+        }
+    }
+
+    return row_discounted_unit_price;
+}
+
+function calculate_discounted_unit_price_2(row) {
+    var this_unit_price = __read_number(
+        row.find('input.pos_unit_price')
+    );
+
     var row_discounted_unit_price = this_unit_price;
     var row_discount_type = row.find('select.row_discount_type').val();
 
@@ -2219,7 +2293,47 @@ function calculate_discounted_unit_price(row) {
     return row_discounted_unit_price;
 }
 
-function get_unit_price_from_discounted_unit_price(
+function get_unit_price_from_discounted_unit_price(row, discounted_unit_price) {
+    var unit_price = discounted_unit_price;
+
+    // ---- Balik diskon klaim (karena diterapkan setelah biasa) ----
+    var row_discount_type_claim = row.find('select.row_discount_type_claim').val();
+    var discount_input_claim = row.find('input.row_discount_amount_claim').val();
+
+    if (discount_input_claim) {
+        if (row_discount_type_claim == 'fixed') {
+            let total_discount_claim = discount_input_claim
+                .split('+')
+                .reduce((sum, item) => {
+                    return sum + (parseFloat(item) || 0);
+                }, 0);
+            unit_price = unit_price + total_discount_claim;
+        } else {
+            unit_price = unit_price / ((100 - parseFloat(discount_input_claim)) / 100);
+        }
+    }
+
+    // ---- Balik diskon biasa ----
+    var row_discount_type = row.find('select.row_discount_type').val();
+    var discount_input = row.find('input.row_discount_amount').val();
+
+    if (discount_input) {
+        if (row_discount_type == 'fixed') {
+            let total_discount = discount_input
+                .split('+')
+                .reduce((sum, item) => {
+                    return sum + (parseFloat(item) || 0);
+                }, 0);
+            unit_price = unit_price + total_discount;
+        } else {
+            unit_price = unit_price / ((100 - parseFloat(discount_input)) / 100);
+        }
+    }
+
+    return unit_price;
+}
+
+function get_unit_price_from_discounted_unit_price_old(
     row,
     discounted_unit_price
 ) {

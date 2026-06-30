@@ -64,15 +64,21 @@
 
 			$discount_type = !empty($product->line_discount_type) ? $product->line_discount_type : 'fixed';
 			$discount_amount = !empty($product->line_discount_amount) ? $product->line_discount_amount : 0;
+			$discount_type_claim = !empty($product->line_discount_type_claim) ? $product->line_discount_type_claim : 'fixed';
+			$discount_amount_claim = !empty($product->line_discount_amount_claim) ? $product->line_discount_amount_claim : 0;
 			
 			if(!empty($discount)) {
 				$discount_type = $discount->discount_type;
 				$discount_amount = $discount->discount_amount;
+				$discount_type = $discount->discount_type;
+				$discount_amount = $discount->discount_amount_claim;
 			}
 
 			if(!empty($so_line) && $action !== 'edit') {
 				$discount_type = $so_line->line_discount_type;
 				$discount_amount = $so_line->line_discount_amount;
+				$discount_type_claim = $so_line->line_discount_type_claim;
+				$discount_amount_claim = $so_line->line_discount_amount_claim;
 			}
 
   			$sell_line_note = '';
@@ -359,6 +365,26 @@
 				</small>
 			@endif
 		</td>
+		
+		<td @if(!$edit_discount) class="hide" @endif>
+			{!! Form::text("products[$row_count][line_discount_amount_claim]", @num_format($discount_amount_claim), ['class' => 'form-control  row_discount_amount_claim']); !!}<br>
+			{!! Form::select("products[$row_count][line_discount_type_claim]", ['fixed' => __('lang_v1.fixed'), 'percentage' => __('lang_v1.percentage')], $discount_type_claim , ['class' => 'form-control row_discount_type_claim']); !!}
+			@if(!empty($discount))
+				<p class="help-block">{!! __('lang_v1.applied_discount_text', ['discount_name' => $discount->name, 'starts_at' => $discount->formated_starts_at, 'ends_at' => $discount->formated_ends_at]) !!}</p>
+			@endif
+
+			@if(!empty($last_sell_line))
+				<br>
+				<small class="text-muted">
+					@lang('lang_v1.prev_discount'): 
+					@if($last_sell_line->line_discount_type_claim == 'percentage')
+						{{@num_format($last_sell_line->line_discount_amount_claim)}}%
+					@else
+						@format_currency($last_sell_line->line_discount_amount_claim)
+					@endif
+				</small>
+			@endif
+		</td>
 		<td class="text-center {{$hide_tax}}">
 			{!! Form::hidden("products[$row_count][item_tax]", @num_format($item_tax), ['class' => 'item_tax']); !!}
 		
@@ -377,7 +403,7 @@
 		@endif
 	@endif
 	<!-- <td class="{{$hide_tax}}"> -->
-	<td>
+	<td class="hide">
 		<input type="text" readonly name="products[{{$row_count}}][unit_price_inc_tax]" class="form-control pos_unit_price_inc_tax input_number" value="{{@num_format($unit_price_inc_tax)}}" @if(!$edit_price) readonly @endif @if(!empty($pos_settings['enable_msp'])) data-rule-min-value="{{$unit_price_inc_tax}}" data-msg-min-value="{{__('lang_v1.minimum_selling_price_error_msg', ['price' => @num_format($unit_price_inc_tax)])}}" @endif>
 	</td>
 	@if(!empty($common_settings['enable_product_warranty']) && !empty($is_direct_sell))

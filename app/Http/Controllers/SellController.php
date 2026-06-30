@@ -988,6 +988,8 @@ class SellController extends Controller
                             'transaction_sell_lines.lot_no_line_id',
                             'transaction_sell_lines.line_discount_type',
                             'transaction_sell_lines.line_discount_amount',
+                            'transaction_sell_lines.line_discount_type_claim',
+                            'transaction_sell_lines.line_discount_amount_claim',
                             'transaction_sell_lines.res_service_staff_id',
                             'units.id as unit_id',
                             'transaction_sell_lines.sub_unit_id',

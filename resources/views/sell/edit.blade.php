@@ -356,6 +356,9 @@
 								<th class="@if(!auth()->user()->can('edit_product_discount_from_sale_screen')) hide @endif">
 									@lang('receipt.discount')
 								</th>
+								<th class="@if(!auth()->user()->can('edit_product_discount_from_sale_screen')) hide @endif">
+									@lang('receipt.discount') Principal
+								</th>
 								<th class="text-center {{$hide_tax}}">
 									@lang('sale.tax')
 								</th>

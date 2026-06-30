@@ -292,6 +292,238 @@ class TransactionUtil extends Util
         $modifiers_formatted = [];
         $combo_lines = [];
         $products_modified_combo = [];
+        $sell_line_warranties = []; // inisialisasi
+
+        foreach ($products as $product) {
+            $multiplier = 1;
+            if (isset($product['sub_unit_id']) && $product['sub_unit_id'] == $product['product_unit_id']) {
+                unset($product['sub_unit_id']);
+            }
+
+            if (! empty($product['sub_unit_id']) && ! empty($product['base_unit_multiplier'])) {
+                $multiplier = $product['base_unit_multiplier'];
+            }
+
+            // Jika ini adalah baris yang sudah ada (edit)
+            if (! empty($product['transaction_sell_lines_id'])) {
+                $edit_id_temp = $this->editSellLine($product, $location_id, $status_before, $multiplier, $uf_data);
+                $edit_ids = array_merge($edit_ids, $edit_id_temp);
+
+                // Modifier handling (sama seperti kode asli)
+                if ($this->isModuleEnabled('modifiers')) {
+                    if (! empty($product['modifier'])) {
+                        foreach ($product['modifier'] as $key => $value) {
+                            if (! empty($product['modifier_sell_line_id'][$key])) {
+                                $edit_modifier = TransactionSellLine::find($product['modifier_sell_line_id'][$key]);
+                                $edit_modifier->quantity = isset($product['modifier_quantity'][$key]) ? $product['modifier_quantity'][$key] : 1;
+                                $modifiers_formatted[] = $edit_modifier;
+                                $edit_ids[] = $product['modifier_sell_line_id'][$key];
+                            } else {
+                                if (! empty($product['modifier_price'][$key])) {
+                                    $this_price = $uf_data ? $this->num_uf($product['modifier_price'][$key]) : $product['modifier_price'][$key];
+                                    $modifier_quantity = isset($product['modifier_quantity'][$key]) ? $product['modifier_quantity'][$key] : 1;
+                                    $modifiers_formatted[] = new TransactionSellLine([
+                                        'product_id' => $product['modifier_set_id'][$key],
+                                        'variation_id' => $value,
+                                        'quantity' => $modifier_quantity,
+                                        'unit_price_before_discount' => $this_price,
+                                        'unit_price' => $this_price,
+                                        'unit_price_inc_tax' => $this_price,
+                                        'parent_sell_line_id' => $product['transaction_sell_lines_id'],
+                                        'children_type' => 'modifier',
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                }
+            } else {
+                // Baris baru
+                $products_modified_combo[] = $product;
+
+                // Ambil nilai awal
+                $uf_unit_price = $uf_data ? $this->num_uf($product['unit_price']) : $product['unit_price'];
+                $unit_price_before_discount = $uf_unit_price / $multiplier;
+
+                // Mulai dengan harga sebelum diskon
+                $harga_satuan = $uf_unit_price;
+                $unit_price = $unit_price_before_discount;
+
+                // ---- 1. TERAPKAN DISKON TOKO (line_discount) ----
+                if (! empty($product['line_discount_type']) && $product['line_discount_amount']) {
+                    $discount_amount = $uf_data ? $this->num_uf($product['line_discount_amount']) : $product['line_discount_amount'];
+                    if ($product['line_discount_type'] == 'fixed') {
+                        $harga_satuan = $uf_unit_price - $discount_amount;
+                        $unit_price = $unit_price_before_discount - ($discount_amount / $multiplier);
+                    } elseif ($product['line_discount_type'] == 'percentage') {
+                        $harga_satuan = ((100 - $discount_amount) * $uf_unit_price) / 100;
+                        $unit_price = ((100 - $discount_amount) * $unit_price_before_discount) / 100;
+                    }
+                }
+
+                // ---- 2. TERAPKAN DISKON KLAIM (STACKING) di atas harga yang sudah di-diskon toko ----
+                if (! empty($product['line_discount_type_claim']) && $product['line_discount_amount_claim']) {
+                    $discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+                    if ($product['line_discount_type_claim'] == 'fixed') {
+                        // Potong langsung dari harga yang sudah didiskon toko
+                        $harga_satuan = $harga_satuan - $discount_amount_claim;
+                        $unit_price = $unit_price - ($discount_amount_claim / $multiplier);
+                    } elseif ($product['line_discount_type_claim'] == 'percentage') {
+                        // Potong persentase dari harga yang sudah didiskon toko
+                        $harga_satuan = ((100 - $discount_amount_claim) * $harga_satuan) / 100;
+                        $unit_price = ((100 - $discount_amount_claim) * $unit_price) / 100;
+                    }
+                }
+
+                // ---- Lanjutkan dengan pengisian data lainnya ----
+                $uf_quantity = $uf_data ? $this->num_uf($product['quantity']) : $product['quantity'];
+                $uf_item_tax = $uf_data ? $this->num_uf($product['item_tax']) : $product['item_tax'];
+                $uf_unit_price_inc_tax = $uf_data ? $this->num_uf($product['unit_price_inc_tax']) : $product['unit_price_inc_tax'];
+
+                // Nilai diskon yang akan disimpan ke database (per unit, sudah dibagi multiplier untuk fixed)
+                $line_discount_amount = 0;
+                if (! empty($product['line_discount_amount'])) {
+                    $line_discount_amount = $uf_data ? $this->num_uf($product['line_discount_amount']) : $product['line_discount_amount'];
+                    if ($product['line_discount_type'] == 'fixed') {
+                        $line_discount_amount = $line_discount_amount / $multiplier;
+                    }
+                }
+                $line_discount_amount_claim = 0;
+                if (! empty($product['line_discount_amount_claim'])) {
+                    $line_discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+                    if ($product['line_discount_type_claim'] == 'fixed') {
+                        $line_discount_amount_claim = $line_discount_amount_claim / $multiplier;
+                    }
+                }
+
+                $line = [
+                    'product_id' => $product['product_id'],
+                    'variation_id' => $product['variation_id'],
+                    'quantity' => $uf_quantity * $multiplier,
+                    'konversi' => $multiplier,
+                    'harga_satuan' => $harga_satuan,
+                    'unit_price_before_discount' => $unit_price_before_discount,
+                    'unit_price' => $unit_price,
+                    'line_discount_type' => ! empty($product['line_discount_type']) ? $product['line_discount_type'] : null,
+                    'line_discount_amount' => $line_discount_amount,
+                    'line_discount_type_claim' => ! empty($product['line_discount_type_claim']) ? $product['line_discount_type_claim'] : null,
+                    'line_discount_amount_claim' => $line_discount_amount_claim,
+                    'item_tax' => $uf_item_tax / $multiplier,
+                    'tax_id' => $product['tax_id'],
+                    'unit_price_inc_tax' => $uf_unit_price_inc_tax / $multiplier,
+                    'sell_line_note' => ! empty($product['sell_line_note']) ? $product['sell_line_note'] : '',
+                    'sub_unit_id' => ! empty($product['sub_unit_id']) ? $product['sub_unit_id'] : null,
+                    'discount_id' => ! empty($product['discount_id']) ? $product['discount_id'] : null,
+                    'res_service_staff_id' => ! empty($product['res_service_staff_id']) ? $product['res_service_staff_id'] : null,
+                    'res_line_order_status' => ! empty($product['res_service_staff_id']) ? 'received' : null,
+                    'so_line_id' => ! empty($product['so_line_id']) ? $product['so_line_id'] : null,
+                    'secondary_unit_quantity' => ! empty($product['secondary_unit_quantity']) ? $this->num_uf($product['secondary_unit_quantity']) : 0,
+                ];
+
+                foreach ($extra_line_parameters as $key => $value) {
+                    $line[$key] = isset($product[$value]) ? $product[$value] : '';
+                }
+
+                if (! empty($product['lot_no_line_id'])) {
+                    $line['lot_no_line_id'] = $product['lot_no_line_id'];
+                }
+
+                // Modifier
+                if ($this->isModuleEnabled('modifiers')) {
+                    $sell_line_modifiers = [];
+                    if (! empty($product['modifier'])) {
+                        foreach ($product['modifier'] as $key => $value) {
+                            if (! empty($product['modifier_price'][$key])) {
+                                $this_price = $uf_data ? $this->num_uf($product['modifier_price'][$key]) : $product['modifier_price'][$key];
+                                $modifier_quantity = isset($product['modifier_quantity'][$key]) ? $product['modifier_quantity'][$key] : 1;
+                                $sell_line_modifiers[] = [
+                                    'product_id' => $product['modifier_set_id'][$key],
+                                    'variation_id' => $value,
+                                    'quantity' => $modifier_quantity,
+                                    'unit_price_before_discount' => $this_price,
+                                    'unit_price' => $this_price,
+                                    'unit_price_inc_tax' => $this_price,
+                                    'children_type' => 'modifier',
+                                ];
+                            }
+                        }
+                    }
+                    $modifiers_array[] = $sell_line_modifiers;
+                }
+
+                $lines_formatted[] = new TransactionSellLine($line);
+                $sell_line_warranties[] = ! empty($product['warranty_id']) ? $product['warranty_id'] : 0;
+
+                // Update sales order line jika ada
+                $this->updateSalesOrderLine($line['so_line_id'], $line['quantity'], 0);
+            }
+        }
+
+        // Proses transaksi (sama seperti kode asli)
+        if (! is_object($transaction)) {
+            $transaction = Transaction::findOrFail($transaction);
+        }
+
+        $deleted_lines = [];
+        if (! empty($edit_ids)) {
+            $deleted_lines = TransactionSellLine::where('transaction_id', $transaction->id)
+                ->whereNotIn('id', $edit_ids)
+                ->select('id')->get()->toArray();
+            $combo_delete_lines = TransactionSellLine::whereIn('parent_sell_line_id', $deleted_lines)->where('children_type', 'combo')->select('id')->get()->toArray();
+            $deleted_lines = array_merge($deleted_lines, $combo_delete_lines);
+            $adjust_qty = $status_before == 'draft' ? false : true;
+            $this->deleteSellLines($deleted_lines, $location_id, $adjust_qty);
+        }
+
+        $combo_lines = [];
+        if (! empty($lines_formatted)) {
+            $transaction->sell_lines()->saveMany($lines_formatted);
+
+            if ($this->isModuleEnabled('modifiers')) {
+                foreach ($lines_formatted as $key => $value) {
+                    if (! empty($modifiers_array[$key])) {
+                        foreach ($modifiers_array[$key] as $modifier) {
+                            $modifier['parent_sell_line_id'] = $value->id;
+                            $modifiers_formatted[] = new TransactionSellLine($modifier);
+                        }
+                    }
+                }
+            }
+
+            foreach ($lines_formatted as $key => $value) {
+                if (! empty($products_modified_combo[$key]['product_type']) && $products_modified_combo[$key]['product_type'] == 'combo') {
+                    $combo_lines = array_merge($combo_lines, $this->__makeLinesForComboProduct($products_modified_combo[$key]['combo'], $value));
+                }
+
+                if (! empty($sell_line_warranties[$key])) {
+                    $value->warranties()->sync([$sell_line_warranties[$key]]);
+                }
+            }
+        }
+
+        if (! empty($combo_lines)) {
+            $transaction->sell_lines()->saveMany($combo_lines);
+        }
+
+        if (! empty($modifiers_formatted)) {
+            $transaction->sell_lines()->saveMany($modifiers_formatted);
+        }
+
+        if ($return_deleted) {
+            return $deleted_lines;
+        }
+
+        return true;
+    }
+
+    public function createOrUpdateSellLines_old($transaction, $products, $location_id, $return_deleted = false, $status_before = null, $extra_line_parameters = [], $uf_data = true)
+    {
+        $lines_formatted = [];
+        $modifiers_array = [];
+        $edit_ids = [0];
+        $modifiers_formatted = [];
+        $combo_lines = [];
+        $products_modified_combo = [];
         foreach ($products as $product) {
             $multiplier = 1;
             if (isset($product['sub_unit_id']) && $product['sub_unit_id'] == $product['product_unit_id']) {
@@ -356,6 +588,18 @@ class TransactionUtil extends Util
                         $unit_price = ((100 - $discount_amount) * $unit_price_before_discount) / 100;
                     }
                 }
+                if (! empty($product['line_discount_type_claim']) && $product['line_discount_amount_claim']) {
+                    $discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+                    if ($product['line_discount_type_claim'] == 'fixed') {
+
+                        //Note: Consider multiplier for fixed discount amount
+                        $harga_satuan = $uf_unit_price - ($discount_amount_claim);
+                        $unit_price = $unit_price_before_discount - ($discount_amount_claim / $multiplier);
+                    } elseif ($product['line_discount_type_claim'] == 'percentage') {
+                        $harga_satuan = ((100 - $discount_amount_claim) * $uf_unit_price) / 100;
+                        $unit_price = ((100 - $discount_amount) * $unit_price_before_discount) / 100;
+                    }
+                }
                 $uf_quantity = $uf_data ? $this->num_uf($product['quantity']) : $product['quantity'];
                 $uf_item_tax = $uf_data ? $this->num_uf($product['item_tax']) : $product['item_tax'];
                 $uf_unit_price_inc_tax = $uf_data ? $this->num_uf($product['unit_price_inc_tax']) : $product['unit_price_inc_tax'];
@@ -366,6 +610,14 @@ class TransactionUtil extends Util
 
                     if ($product['line_discount_type'] == 'fixed') {
                         $line_discount_amount = $line_discount_amount / $multiplier;
+                    }
+                }
+                $line_discount_amount_claim = 0;
+                if (! empty($product['line_discount_amount_claim'])) {
+                    $line_discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+
+                    if ($product['line_discount_type_claim'] == 'fixed') {
+                        $line_discount_amount_claim = $line_discount_amount_claim / $multiplier;
                     }
                 }
 
@@ -379,6 +631,8 @@ class TransactionUtil extends Util
                     'unit_price' => $unit_price,
                     'line_discount_type' => ! empty($product['line_discount_type']) ? $product['line_discount_type'] : null,
                     'line_discount_amount' => $line_discount_amount,
+                    'line_discount_type_claim' => ! empty($product['line_discount_type_claim']) ? $product['line_discount_type_claim'] : null,
+                    'line_discount_amount_claim' => $line_discount_amount_claim,
                     'item_tax' => $uf_item_tax / $multiplier,
                     'tax_id' => $product['tax_id'],
                     'unit_price_inc_tax' => $uf_unit_price_inc_tax / $multiplier,
@@ -559,6 +813,123 @@ class TransactionUtil extends Util
      * @return bool
      */
     public function editSellLine($product, $location_id, $status_before, $multiplier = 1, $uf_data = true)
+    {
+        //Get the old order quantity
+        $sell_line = TransactionSellLine::with(['product', 'warranties'])
+            ->find($product['transaction_sell_lines_id']);
+
+        $old_qty = $sell_line->quantity;
+        $edit_ids[] = $product['transaction_sell_lines_id'];
+
+        //Adjust quantity
+        if ($status_before != 'draft') {
+            $new_qty = $this->num_uf($product['quantity']) * $multiplier;
+            $difference = $sell_line->quantity - $new_qty;
+            $this->adjustQuantity($location_id, $product['product_id'], $product['variation_id'], $difference);
+        }
+
+        // ---- Calculate prices with discounts (stacking) ----
+        $uf_unit_price = $uf_data ? $this->num_uf($product['unit_price']) : $product['unit_price'];
+        $unit_price_before_discount = $uf_unit_price / $multiplier;
+
+        // Initialize prices
+        $harga_satuan = $uf_unit_price;
+        $unit_price = $unit_price_before_discount;
+
+        // ---- 1. Regular discount (line_discount) ----
+        if (! empty($product['line_discount_type']) && $product['line_discount_amount']) {
+            $discount_amount = $uf_data ? $this->num_uf($product['line_discount_amount']) : $product['line_discount_amount'];
+            if ($product['line_discount_type'] == 'fixed') {
+                $harga_satuan = $uf_unit_price - $discount_amount;
+                $unit_price = $unit_price_before_discount - ($discount_amount / $multiplier);
+            } elseif ($product['line_discount_type'] == 'percentage') {
+                $harga_satuan = ((100 - $discount_amount) * $uf_unit_price) / 100;
+                $unit_price = ((100 - $discount_amount) * $unit_price_before_discount) / 100;
+            }
+        }
+
+        // ---- 2. Claim discount (line_discount_claim) - stacking ----
+        if (! empty($product['line_discount_type_claim']) && $product['line_discount_amount_claim']) {
+            $discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+            if ($product['line_discount_type_claim'] == 'fixed') {
+                $harga_satuan = $harga_satuan - $discount_amount_claim;
+                $unit_price = $unit_price - ($discount_amount_claim / $multiplier);
+            } elseif ($product['line_discount_type_claim'] == 'percentage') {
+                $harga_satuan = ((100 - $discount_amount_claim) * $harga_satuan) / 100;
+                $unit_price = ((100 - $discount_amount_claim) * $unit_price) / 100;
+            }
+        }
+
+        // ---- Prepare discount amounts for storage (per unit) ----
+        $line_discount_amount = 0;
+        if (! empty($product['line_discount_amount'])) {
+            $line_discount_amount = $uf_data ? $this->num_uf($product['line_discount_amount']) : $product['line_discount_amount'];
+            if ($product['line_discount_type'] == 'fixed') {
+                $line_discount_amount = $line_discount_amount / $multiplier;
+            }
+        }
+        $line_discount_amount_claim = 0;
+        if (! empty($product['line_discount_amount_claim'])) {
+            $line_discount_amount_claim = $uf_data ? $this->num_uf($product['line_discount_amount_claim']) : $product['line_discount_amount_claim'];
+            if ($product['line_discount_type_claim'] == 'fixed') {
+                $line_discount_amount_claim = $line_discount_amount_claim / $multiplier;
+            }
+        }
+
+        // ---- Update sell line ----
+        $sell_line->fill([
+            'product_id' => $product['product_id'],
+            'variation_id' => $product['variation_id'],
+            'quantity' => $uf_data ? $this->num_uf($product['quantity']) * $multiplier : $product['quantity'] * $multiplier,
+            'unit_price_before_discount' => $unit_price_before_discount,
+            'unit_price' => $unit_price,
+            'line_discount_type' => ! empty($product['line_discount_type']) ? $product['line_discount_type'] : null,
+            'line_discount_amount' => $line_discount_amount,
+            'line_discount_type_claim' => ! empty($product['line_discount_type_claim']) ? $product['line_discount_type_claim'] : null,
+            'line_discount_amount_claim' => $line_discount_amount_claim,
+            'item_tax' => $uf_data ? $this->num_uf($product['item_tax']) / $multiplier : $product['item_tax'] / $multiplier,
+            'tax_id' => $product['tax_id'],
+            'unit_price_inc_tax' => $uf_data ? $this->num_uf($product['unit_price_inc_tax']) / $multiplier : $product['unit_price_inc_tax'] / $multiplier,
+            'sell_line_note' => ! empty($product['sell_line_note']) ? $product['sell_line_note'] : '',
+            'sub_unit_id' => ! empty($product['sub_unit_id']) ? $product['sub_unit_id'] : null,
+            'res_service_staff_id' => ! empty($product['res_service_staff_id']) ? $product['res_service_staff_id'] : null,
+            'secondary_unit_quantity' => ! empty($product['secondary_unit_quantity']) ? $this->num_uf($product['secondary_unit_quantity']) : 0,
+        ]);
+
+        // Set 'harga_satuan' if the column exists (optional, for consistency)
+        if ($sell_line->isFillable('harga_satuan')) {
+            $sell_line->harga_satuan = $harga_satuan;
+        }
+        $sell_line->save();
+
+        // ---- Warranty handling ----
+        if (! empty($product['warranty_id'])) {
+            $warranty_ids = $sell_line->warranties->pluck('warranty_id')->toArray();
+            if (! in_array($product['warranty_id'], $warranty_ids)) {
+                $warranty_ids[] = $product['warranty_id'];
+                $sell_line->warranties()->sync(array_filter($warranty_ids));
+            }
+        } else {
+            $sell_line->warranties()->sync([]);
+        }
+
+        // ---- Combo handling ----
+        if (isset($product['product_type']) && $product['product_type'] == 'combo' && ! empty($product['combo'])) {
+            // Collect combo sell line IDs to avoid deletion
+            foreach ($product['combo'] as $combo_line) {
+                $edit_ids[] = $combo_line['transaction_sell_lines_id'];
+            }
+            $adjust_stock = ($status_before != 'draft');
+            $this->updateEditedSellLineCombo($product['combo'], $location_id, $adjust_stock);
+        }
+
+        // Update sales order line if exists
+        $this->updateSalesOrderLine($sell_line->so_line_id, $sell_line->quantity, $old_qty);
+
+        return $edit_ids;
+    }
+
+    public function editSellLine_old($product, $location_id, $status_before, $multiplier = 1, $uf_data = true)
     {
         //Get the old order quantity
         $sell_line = TransactionSellLine::with(['product', 'warranties'])
@@ -3266,110 +3637,110 @@ class TransactionUtil extends Util
      * @param  int  $purchase_line_id (default: null)
      * @return object
      */
-     
-     
-     protected function getRealStockFromHistory($business_id, $variation_id, $location_id)
+
+
+    protected function getRealStockFromHistory($business_id, $variation_id, $location_id)
     {
-        $productUtil=  app(ProductUtil::class);
+        $productUtil =  app(ProductUtil::class);
         $history =  $productUtil->getVariationStockHistory($business_id, $variation_id, $location_id);
-    
+
         if (empty($history)) {
             return 0;
         }
-    
+
         return end($history)['stock'];
     }
-     
-     protected function repairQuantitySoldIfMismatch($business, $line)
-        {
-            // stok REAL (berdasarkan histori transaksi)
-          
-            $real_stock = $this->getRealStockFromHistory(
-                $business['id'],
-                $line->variation_id,
-                $business['location_id']
-            );
-        
-            // total stok MASUK valid (exclude minus)
-            $total_in = PurchaseLine::join('transactions as t', 't.id', '=', 'purchase_lines.transaction_id')
-                ->where('purchase_lines.product_id', $line->product_id)
-                ->where('purchase_lines.variation_id', $line->variation_id)
-                ->where('t.location_id', $business['location_id'])
-                ->whereIn('t.type', [
-                    'purchase',
-                    'opening_stock',
-                    'purchase_transfer',
-                    'production_purchase',
-                ])
-                ->where('t.status', 'received')
-                ->where('purchase_lines.quantity', '>', 0)
-                ->sum('purchase_lines.quantity');
-        
-            $expected_sold = max(0, $total_in - $real_stock);
-        
-            $current_sold = PurchaseLine::where('product_id', $line->product_id)
-                ->where('variation_id', $line->variation_id)
-                ->sum('quantity_sold');
-        
-            $diff = $expected_sold - $current_sold;
-        
-            if ($diff <= 0) {
-                return;
-            }
-        
-            // tambahkan kekurangan ke purchase_line terakhir
-            $last_pl = PurchaseLine::join('transactions as t', 't.id', '=', 'purchase_lines.transaction_id')
-                ->where('purchase_lines.product_id', $line->product_id)
-                ->where('purchase_lines.variation_id', $line->variation_id)
-                ->where('purchase_lines.quantity', '>', 0)
-                ->where('t.location_id', $business['location_id'])
-                ->whereIn('t.type', [
-                    'purchase',
-                    'opening_stock',
-                    'purchase_transfer',
-                    'production_purchase',
-                ])
-                ->where('t.status', 'received')
-                ->orderByDesc('t.transaction_date')
-                ->select('purchase_lines.*')
-                ->lockForUpdate()
-                ->first();
-        
-            if (!$last_pl) {
-                return;
-            }
-        
-            $used = $last_pl->quantity_sold
-                + $last_pl->quantity_adjusted
-                + $last_pl->quantity_returned
-                + $last_pl->mfg_quantity_used;
-        
-            $available = max(0, $last_pl->quantity - $used);
-            $fix = min($available, $diff);
-        
-            if ($fix > 0) {
-                $last_pl->increment('quantity_sold', $fix);
-            }
+
+    protected function repairQuantitySoldIfMismatch($business, $line)
+    {
+        // stok REAL (berdasarkan histori transaksi)
+
+        $real_stock = $this->getRealStockFromHistory(
+            $business['id'],
+            $line->variation_id,
+            $business['location_id']
+        );
+
+        // total stok MASUK valid (exclude minus)
+        $total_in = PurchaseLine::join('transactions as t', 't.id', '=', 'purchase_lines.transaction_id')
+            ->where('purchase_lines.product_id', $line->product_id)
+            ->where('purchase_lines.variation_id', $line->variation_id)
+            ->where('t.location_id', $business['location_id'])
+            ->whereIn('t.type', [
+                'purchase',
+                'opening_stock',
+                'purchase_transfer',
+                'production_purchase',
+            ])
+            ->where('t.status', 'received')
+            ->where('purchase_lines.quantity', '>', 0)
+            ->sum('purchase_lines.quantity');
+
+        $expected_sold = max(0, $total_in - $real_stock);
+
+        $current_sold = PurchaseLine::where('product_id', $line->product_id)
+            ->where('variation_id', $line->variation_id)
+            ->sum('quantity_sold');
+
+        $diff = $expected_sold - $current_sold;
+
+        if ($diff <= 0) {
+            return;
         }
-        
-        
-      public function mapPurchaseSell(
-    $business,
-    $transaction_lines,
-    $mapping_type = 'purchase',
-    $check_expiry = true,
-    $purchase_line_id = null
+
+        // tambahkan kekurangan ke purchase_line terakhir
+        $last_pl = PurchaseLine::join('transactions as t', 't.id', '=', 'purchase_lines.transaction_id')
+            ->where('purchase_lines.product_id', $line->product_id)
+            ->where('purchase_lines.variation_id', $line->variation_id)
+            ->where('purchase_lines.quantity', '>', 0)
+            ->where('t.location_id', $business['location_id'])
+            ->whereIn('t.type', [
+                'purchase',
+                'opening_stock',
+                'purchase_transfer',
+                'production_purchase',
+            ])
+            ->where('t.status', 'received')
+            ->orderByDesc('t.transaction_date')
+            ->select('purchase_lines.*')
+            ->lockForUpdate()
+            ->first();
+
+        if (!$last_pl) {
+            return;
+        }
+
+        $used = $last_pl->quantity_sold
+            + $last_pl->quantity_adjusted
+            + $last_pl->quantity_returned
+            + $last_pl->mfg_quantity_used;
+
+        $available = max(0, $last_pl->quantity - $used);
+        $fix = min($available, $diff);
+
+        if ($fix > 0) {
+            $last_pl->increment('quantity_sold', $fix);
+        }
+    }
+
+
+    public function mapPurchaseSell(
+        $business,
+        $transaction_lines,
+        $mapping_type = 'purchase',
+        $check_expiry = true,
+        $purchase_line_id = null
     ) {
         if (empty($transaction_lines)) {
             return false;
         }
-    
+
         if (!empty($business['pos_settings']) && !is_array($business['pos_settings'])) {
             $business['pos_settings'] = json_decode($business['pos_settings'], true);
         }
-    
+
         $allow_overselling = !empty($business['pos_settings']['allow_overselling']);
-    
+
         // expiry rules (ASLI)
         $stop_selling_expired = false;
         if ($check_expiry) {
@@ -3383,25 +3754,25 @@ class TransactionUtil extends Util
                 }
             }
         }
-    
+
         foreach ($transaction_lines as $line) {
-    
+
             $product = Product::find($line->product_id);
             if (empty($product) || $product->enable_stock != 1) {
                 continue;
             }
-    
+
             /**
              * ======================================================
              * 🔧 PATCH — REPAIR STOK REAL (TANPA SENTUH ADJUSTMENT)
              * ======================================================
              */
             // if ($mapping_type === 'purchase') {
-                $this->repairQuantitySoldIfMismatch($business, $line);
+            $this->repairQuantitySoldIfMismatch($business, $line);
             // }
-    
+
             $qty_sum_query = $this->get_pl_quantity_sum_string('PL');
-    
+
             $query = Transaction::join('purchase_lines AS PL', 'transactions.id', '=', 'PL.transaction_id')
                 ->where('transactions.business_id', $business['id'])
                 ->where('transactions.location_id', $business['location_id'])
@@ -3415,30 +3786,30 @@ class TransactionUtil extends Util
                 ->whereRaw("( $qty_sum_query ) < PL.quantity")
                 ->where('PL.product_id', $line->product_id)
                 ->where('PL.variation_id', $line->variation_id);
-    
+
             if ($stop_selling_expired && empty($purchase_line_id)) {
                 $stop_before = request()->session()->get('business')['stop_selling_before'];
                 $expiry_date = \Carbon::today()->addDays($stop_before)->toDateString();
                 $query->where(function ($q) use ($expiry_date) {
                     $q->whereNull('PL.exp_date')
-                      ->orWhere('PL.exp_date', '>', $expiry_date);
+                        ->orWhere('PL.exp_date', '>', $expiry_date);
                 });
             }
-    
+
             if (!empty($line->lot_no_line_id)) {
                 $query->where('PL.id', $line->lot_no_line_id);
             }
-    
+
             if (!empty($purchase_line_id)) {
                 $query->where('PL.id', $purchase_line_id);
             }
-    
+
             if ($business['accounting_method'] == 'lifo') {
                 $query->orderBy('transaction_date', 'desc');
             } else {
                 $query->orderBy('transaction_date', 'asc');
             }
-    
+
             $rows = $query->select(
                 'PL.id as purchase_lines_id',
                 DB::raw("(PL.quantity - ( $qty_sum_query )) AS quantity_available"),
@@ -3447,18 +3818,18 @@ class TransactionUtil extends Util
                 'PL.quantity_returned',
                 'PL.mfg_quantity_used'
             )->lockForUpdate()->get();
-    
+
             $purchase_sell_map = [];
             $purchase_adjustment_map = [];
-    
+
             $qty_selling = $line->quantity;
-    
+
             foreach ($rows as $row) {
-    
+
                 if ($qty_selling <= 0) {
                     break;
                 }
-    
+
                 $alloc = $qty_selling - $row->quantity_available;
                 // if ($alloc <= 0) {
                 //     continue;
@@ -3466,9 +3837,9 @@ class TransactionUtil extends Util
                 //   throw new PurchaseSellMismatch('Stok Produk ['.$product->id. ' - '.$product->sku.'] '.$product->name.'saat ini '. number_format($row->quantity_available).' kurang dari '.$qty_selling. ' kurang :'. $alloc);  
                 //   break;
                 // }
-    
+
                 if ($mapping_type == 'stock_adjustment') {
-    
+
                     $purchase_adjustment_map[] = [
                         'stock_adjustment_line_id' => $line->id,
                         'purchase_line_id' => $row->purchase_lines_id,
@@ -3476,12 +3847,11 @@ class TransactionUtil extends Util
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
-    
+
                     PurchaseLine::where('id', $row->purchase_lines_id)
                         ->increment('quantity_adjusted', $qty_selling);
-    
                 } elseif ($mapping_type == 'purchase') {
-    
+
                     $purchase_sell_map[] = [
                         'sell_line_id' => $line->id,
                         'purchase_line_id' => $row->purchase_lines_id,
@@ -3489,12 +3859,11 @@ class TransactionUtil extends Util
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
-    
+
                     PurchaseLine::where('id', $row->purchase_lines_id)
                         ->increment('quantity_sold', $qty_selling);
-    
                 } elseif ($mapping_type == 'production_purchase') {
-    
+
                     $purchase_sell_map[] = [
                         'sell_line_id' => $line->id,
                         'purchase_line_id' => $row->purchase_lines_id,
@@ -3502,28 +3871,28 @@ class TransactionUtil extends Util
                         'created_at' => now(),
                         'updated_at' => now(),
                     ];
-    
+
                     PurchaseLine::where('id', $row->purchase_lines_id)
                         ->increment('mfg_quantity_used', $qty_selling);
                 }
-    
+
                 $qty_selling -= $qty_selling;
             }
-    
+
             // if ($qty_selling > 0 && !$allow_overselling) {
             //     throw new PurchaseSellMismatch('Purchase & sell quantity mismatch after repair');
             // }
-    
+
             if (!empty($purchase_adjustment_map)) {
                 TransactionSellLinesPurchaseLines::insert($purchase_adjustment_map);
             }
-    
+
             if (!empty($purchase_sell_map)) {
                 TransactionSellLinesPurchaseLines::insert($purchase_sell_map);
             }
         }
     }
-    
+
     public function mapPurchaseSell_old($business, $transaction_lines, $mapping_type = 'purchase', $check_expiry = true, $purchase_line_id = null)
     {
         if (empty($transaction_lines)) {

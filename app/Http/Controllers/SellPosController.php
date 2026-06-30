@@ -1337,7 +1337,6 @@ class SellPosController extends Controller
 
                 //Begin transaction
                 DB::beginTransaction();
-
                 $transaction = $this->transactionUtil->updateSellTransaction($id, $business_id, $input, $invoice_total, $user_id);
 
                 //update service staff timer
