@@ -3416,16 +3416,17 @@ class ReportController extends Controller
                 ->addColumn('discount_claim', function ($row) {
                     // 1) Hitung nominal diskon biasa
                     $regular_discount = 0;
+                    $harga_awal = $row->unit_price_before_discount *  $row->quantity;
                     if (!empty($row->line_discount_type) && $row->line_discount_amount > 0) {
                         if ($row->line_discount_type == 'percentage') {
-                            $regular_discount = ($row->line_discount_amount / 100) * ($row->unit_price_inc_tax *  $row->quantity);
+                            $regular_discount = ($row->line_discount_amount / 100) * $harga_awal;
                         } else { // fixed
-                            $regular_discount = (float) $row->line_discount_amount *  $row->quantity;
+                            $regular_discount = (float) $row->line_discount_amount;
                         }
                     }
 
                     // 2) Harga setelah diskon biasa
-                    $price_after_regular_discount = $row->unit_price_inc_tax - $regular_discount;
+                    $price_after_regular_discount = $harga_awal - $regular_discount;
 
                     // 3) Hitung diskon klaim
                     $claim_discount = 0;
