@@ -62,9 +62,9 @@
 				$unit_price_inc_tax = $so_line->unit_price_inc_tax;
 			}
 
-			$discount_type = !empty($product->line_discount_type) ? $product->line_discount_type : 'fixed';
+			$discount_type = !empty($product->line_discount_type) ? $product->line_discount_type : 'percentage';
 			$discount_amount = !empty($product->line_discount_amount) ? $product->line_discount_amount : 0;
-			$discount_type_claim = !empty($product->line_discount_type_claim) ? $product->line_discount_type_claim : 'fixed';
+			$discount_type_claim = !empty($product->line_discount_type_claim) ? $product->line_discount_type_claim : 'percentage';
 			$discount_amount_claim = !empty($product->line_discount_amount_claim) ? $product->line_discount_amount_claim : 0;
 			
 			if(!empty($discount)) {

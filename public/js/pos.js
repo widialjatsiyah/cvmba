@@ -2203,7 +2203,7 @@ function calculate_discounted_unit_price_old(row) {
     var row_discount_type = row.find('select.row_discount_type').val();
     var row_discount_amount = __read_number(row.find('input.row_discount_amount'));
     // console.log(row_discount_type);
-    console.log(row_discount_amount);   
+    // console.log(row_discount_amount);   
     if (row_discount_amount) {
         if (row_discount_type == 'fixed') {
             row_discounted_unit_price = this_unit_price - row_discount_amount;
