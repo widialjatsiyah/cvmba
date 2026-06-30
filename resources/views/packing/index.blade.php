@@ -13,14 +13,6 @@
 <!-- Main content -->
 <section class="content">
     @component('components.widget', ['class' => 'box-primary', 'title' => "All Packing Records"])
-        @can('packing.create')
-            @slot('tool')
-                <div class="box-tools">
-                <button type="button" class="btn btn-primary" data-href="{{action([\App\Http\Controllers\PackingController::class, 'create'])}}" data-container=".packing_modal">
-                        <i class="fa fa-plus"></i> @lang( 'messages.add' )</button>
-                </div>
-            @endslot
-        @endcan
         @can('packing.view')
             <div class="table-responsive">
                 <table class="table table-bordered table-striped" id="packing_table">
