@@ -1859,9 +1859,9 @@ function calculate_billing_details(price_total) {
     $('span.total_payable_span').text(__currency_trans_from_en(total_payable_rounded, true));
 
     //Check if edit form then don't update price.
-    if ($('form#edit_pos_sell_form').length == 0 && $('form#edit_sell_form').length == 0) {
-        __write_number($('.payment-amount').first(), total_payable_rounded);
-    }
+    // if ($('form#edit_pos_sell_form').length == 0 && $('form#edit_sell_form').length == 0) {
+    //     __write_number($('.payment-amount').first(), total_payable_rounded);
+    // }
 
     $(document).trigger('invoice_total_calculated');
 
