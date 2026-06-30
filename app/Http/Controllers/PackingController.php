@@ -108,7 +108,7 @@ class PackingController extends Controller
 
         $packing = Packing::findOrFail($id);
         $packing_details = DetailPacking::where('packing_id', $id)
-            ->with(['transactions' => function($query) {
+            ->with(['transaction' => function($query) {
                 $query->with(['contact', 'sell_lines', 'sell_lines.product', 'sell_lines.variations']);
             }])
             ->get();

@@ -338,6 +338,16 @@ class AdminSidebarMenu
                             );
                         }
 
+                        
+
+                        if ($is_admin || auth()->user()->hasAnyPermission(['access_shipping', 'access_own_shipping', 'access_commission_agent_shipping'])) {
+                            $sub->url(
+                                action([\App\Http\Controllers\PackingController::class, 'index']),
+                                'Pengepakan',
+                                ['icon' => 'fa fas fa-truck', 'active' => request()->segment(1) == 'packing']
+                            );
+                        }
+
                         if (auth()->user()->can('discount.access')) {
                             $sub->url(
                                 action([\App\Http\Controllers\DiscountController::class, 'index']),
