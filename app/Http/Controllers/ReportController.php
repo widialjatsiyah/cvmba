@@ -3418,9 +3418,9 @@ class ReportController extends Controller
                     $regular_discount = 0;
                     if (!empty($row->line_discount_type) && $row->line_discount_amount > 0) {
                         if ($row->line_discount_type == 'percentage') {
-                            $regular_discount = ($row->line_discount_amount / 100) * $row->unit_price_inc_tax;
+                            $regular_discount = ($row->line_discount_amount / 100) * ($row->unit_price_inc_tax *  $row->quantity);
                         } else { // fixed
-                            $regular_discount = (float) $row->line_discount_amount;
+                            $regular_discount = (float) $row->line_discount_amount *  $row->quantity;
                         }
                     }
 
