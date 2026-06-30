@@ -612,6 +612,12 @@ class AdminSidebarMenu
                                 ['icon' => 'fa fas fa-tasks', 'active' => request()->segment(2) == 'items-report']
                             );
 
+                             $sub->url(
+                                action([\App\Http\Controllers\ReportController::class, 'itemsClaimReport']),
+                                'laporan Klaim',
+                                ['icon' => 'fa fas fa-tasks', 'active' => request()->segment(2) == 'items-claim-report']
+                            );
+
                             $sub->url(
                                 action([\App\Http\Controllers\ReportController::class, 'getproductPurchaseReport']),
                                 __('lang_v1.product_purchase_report'),
