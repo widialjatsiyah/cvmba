@@ -16,6 +16,7 @@
         @endif
         <th>{{ __('sale.unit_price') }}</th>
         <th>{{ __('sale.discount') }}</th>
+        <th>Diskon Principal</th>
         <th>{{ __('sale.tax') }}</th>
         <th>{{ __('sale.price_inc_tax') }}</th>
         <th>{{ __('sale.subtotal') }}</th>
@@ -65,7 +66,7 @@
                 @if(!empty($for_ledger))
                     {{@format_quantity($sell_line->quantity)}}
                 @else
-                    <span class="display_currency" data-currency_symbol="false" data-is_quantity="true">{{ $sell_line->quantity/$sell_line->konversi }}</span> 
+                    <span class="display_currency" data-currency_symbol="false" data-is_quantity="true">{{ $sell_line->quantity }}</span> 
                 @endif
                     @if(!empty($sell_line->sub_unit)) {{$sell_line->sub_unit->short_name}} @else {{$sell_line->product->unit->short_name}} @endif
 
@@ -88,7 +89,7 @@
                 @if(!empty($for_ledger))
                     @format_currency($sell_line->unit_price_before_discount)
                 @else
-                    <span class="display_currency" data-currency_symbol="true">{{ ($sell_line->quantity!=1&&$sell_line->sub_unit!='')?$sell_line->harga_satuan:$sell_line->unit_price_before_discount }}</span>
+                    <span class="display_currency" data-currency_symbol="true">{{ ($sell_line->quantity!=1&&$sell_line->sub_unit!='')?$sell_line->unit_price_before_discount:$sell_line->unit_price_before_discount }}</span>
                 @endif
             </td>
             <td>
@@ -101,6 +102,14 @@
             </td>
             <td>
                 @if(!empty($for_ledger))
+                    @format_currency($sell_line->get_discount_amount())
+                @else
+                    <span class="display_currency" data-currency_symbol="true">{{ ($sell_line->unit_price_before_discount - $sell_line->get_discount_amount()) * $sell_line->line_discount_amount_claim / 100 }}</span>
+                @endif
+                @if($sell_line->line_discount_type == 'percentage') ({{$sell_line->line_discount_amount_claim}}%) @endif
+            </td>
+            <td>
+                @if(!empty($for_ledger))
                     @format_currency($sell_line->item_tax)
                 @else
                     <span class="display_currency" data-currency_symbol="true">{{ $sell_line->item_tax }}</span> 
@@ -109,7 +118,7 @@
                 ( {{ $taxes[$sell_line->tax_id]}} )
                 @endif
             </td>
-            <td>
+            <td> 
                 @if(!empty($for_ledger))
                     @format_currency($sell_line->unit_price_inc_tax)
                 @else
